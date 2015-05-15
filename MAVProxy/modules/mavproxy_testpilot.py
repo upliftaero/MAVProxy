@@ -111,7 +111,7 @@ class TestPilotModule(mp_module.MPModule):
         label = args[2]
         for key in self.templates.keys():
             if key == activityname:
-                instance = self.templates[key](self,label)
+                instance = self.templates[key](self,label,self.directory)
                 self.activities.append(instance)
                 break
 
@@ -152,13 +152,13 @@ class TestPilotActivity(object):
         return
 
 class TPActivityCSV(TestPilotActivity):
-    def __init__(self,state,label,fields):
+    def __init__(self,state,label,fields,directory):
         super(TPActivityCSV, self).__init__(state,label)
         self.fields = fields
         self.state = state
         self.field_types = []
         self.msg_types = set()
-        self.filename = label + ".csv"
+        self.filename = directory + os.sep + label + ".csv"
         self.starttime = time.time()
         self.name = label + " (csv)"
 
@@ -203,9 +203,9 @@ class TPActivityCSV(TestPilotActivity):
 
 
 class TPActivityPower(TPActivityCSV):
-    def __init__(self,state,label):
+    def __init__(self,state,label,directory):
         _fields = ["SYS_STATUS.current_battery", "SYS_STATUS.voltage_battery", "VFR_HUD.airspeed"]
-        super(TPActivityPower, self).__init__(state, label, _fields)
+        super(TPActivityPower, self).__init__(state, label, _fields, directory)
         self.name = "power"
         print("Beginning power response test\nUse 'tp stop <number> to indicate completion")
 
@@ -229,9 +229,9 @@ class TPActivityPower(TPActivityCSV):
         # TODO: save to file?
 
 class TPActivityTakeoff(TPActivityCSV):
-    def __init__(self,state,label):
+    def __init__(self,state,label,directory):
         _fields = ["VFR_HUD.alt", "GLOBAL_POSITION_INT.lat", "GLOBAL_POSITION_INT.lon"]
-        super(TPActivityTakeoff, self).__init__(state, label, _fields)
+        super(TPActivityTakeoff, self).__init__(state, label, _fields, directory)
         self.name = "takeoff"
         print("Beginning takeoff performance test\nUse 'tp stop <number> to indicate completion")
 
