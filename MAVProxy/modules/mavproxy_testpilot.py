@@ -97,7 +97,7 @@ class TestPilotModule(mp_module.MPModule):
         print("----------------------------------\n")
         print("Activities in progress:\n")
         for i in range(0,len(self.activities)):
-            print("(" + str(i) + ") " + self.activities[i].name + "\n")
+            print("(" + str(i) + ") " + self.activities[i].label + " - " + self.activities[i].type + "\n")
 
     def testpilot_start_activity(self, args):
         if len(args) < 3:
@@ -116,15 +116,22 @@ class TestPilotModule(mp_module.MPModule):
                 break
 
     def testpilot_stop_activity(self, args):
-        activity = args[1]
-        # Check to see if the user is stopping a number or a template name
+        tostop = args[1]
+        # Try stopping by label and then by activity number
+        for activity in self.activities:
+            if tostop == activity.label:
+                print("Stopping activity by name: " + tostop)
+                activity.kill()
+                self.activities.remove(activity)
+                return
+        print("Stopping activity by number: " + tostop)
         try:
-            i = int(activity)
+            i = int(tostop)
             self.activities[i].kill()
             self.activities.remove(self.activities[i])
             return
         except:
-            print("Error stopping activity " + activity)
+            print("Error stopping activity by number: " + tostop)
 
     def unload(self):
         '''unload module'''
@@ -160,7 +167,8 @@ class TPActivityCSV(TestPilotActivity):
         self.msg_types = set()
         self.filename = directory + os.sep + label + ".csv"
         self.starttime = time.time()
-        self.name = label + " (csv)"
+        self.label = label
+        #self.name = label + " (csv)"
 
         re_caps = re.compile('[A-Z_][A-Z0-9_]+')
         for f in self.fields:
@@ -206,7 +214,7 @@ class TPActivityPower(TPActivityCSV):
     def __init__(self,state,label,directory):
         _fields = ["SYS_STATUS.current_battery", "SYS_STATUS.voltage_battery", "VFR_HUD.airspeed"]
         super(TPActivityPower, self).__init__(state, label, _fields, directory)
-        self.name = "power"
+        self.type = "power"
         print("Beginning power response test\nUse 'tp stop <number> to indicate completion")
 
     def kill(self):
@@ -218,9 +226,9 @@ class TPActivityPower(TPActivityCSV):
         yvalues = _data['SYS_STATUS.current_battery']/100.0*_data['SYS_STATUS.voltage_battery']/1000.0
         xvalues = _data['VFR_HUD.airspeed']
         yline = lowess(yvalues,xvalues,return_sorted=False)
+
         plt.plot(xvalues,yvalues,'.',color='0.9')
         plt.plot(xvalues,yline,'r',linewidth=3.0)
-
         title_str = "Power Required vs Airspeed"
         plt.title(title_str)
         plt.xlabel("Airspeed (m/s)")
@@ -232,7 +240,7 @@ class TPActivityTakeoff(TPActivityCSV):
     def __init__(self,state,label,directory):
         _fields = ["VFR_HUD.alt", "GLOBAL_POSITION_INT.lat", "GLOBAL_POSITION_INT.lon"]
         super(TPActivityTakeoff, self).__init__(state, label, _fields, directory)
-        self.name = "takeoff"
+        self.type = "takeoff"
         print("Beginning takeoff performance test\nUse 'tp stop <number> to indicate completion")
 
     def kill(self):
