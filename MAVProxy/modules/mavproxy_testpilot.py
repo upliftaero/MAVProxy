@@ -16,6 +16,7 @@ import numpy
 import pandas
 from pandas.io.parsers import *
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 from matplotlib.backends.backend_pdf import PdfPages
 import math
 
@@ -49,7 +50,7 @@ class TestPilotModule(mp_module.MPModule):
         self.comment = ""
         self.directory = os.getcwd()
 
-        self.add_command('tp',self.cmd_testpilot,"      record for analysis","<start|stop|title|comment>")
+        self.add_command('tp',self.cmd_testpilot,"record and analyze flight data","<start|stop|directory|aircraft|weight|motor|prop|comment>")
 
     def cmd_testpilot(self, args):
         # With no arguments, display status
@@ -110,6 +111,10 @@ class TestPilotModule(mp_module.MPModule):
 
         activityname = args[1]
         label = args[2]
+        if (self.find_activity_by_label(label)) is not None:
+            print("Activity label already exists: " + label)
+            return
+
         for key in self.templates.keys():
             if key == activityname:
                 instance = self.templates[key](self,label,self.directory)
@@ -119,12 +124,12 @@ class TestPilotModule(mp_module.MPModule):
     def testpilot_stop_activity(self, args):
         tostop = args[1]
         # Try stopping by label and then by activity number
-        for activity in self.activities:
-            if tostop == activity.label:
-                print("Stopping activity by name: " + tostop)
-                activity.kill()
-                self.activities.remove(activity)
-                return
+        activity = self.find_activity_by_label(tostop)
+        if activity is not None:
+            print("Stopping activity by name: " + tostop)
+            activity.kill()
+            self.activities.remove(activity)
+            return
         print("Stopping activity by number: " + tostop)
         try:
             i = int(tostop)
@@ -133,6 +138,11 @@ class TestPilotModule(mp_module.MPModule):
             return
         except:
             print("Error stopping activity by number: " + tostop)
+
+    def find_activity_by_label(self, label):
+        for activity in self.activities:
+            if label == activity.label:
+                return activity
 
     def unload(self):
         '''unload module'''
@@ -177,7 +187,7 @@ class TPActivityCSV(TestPilotActivity):
             self.msg_types = self.msg_types.union(caps)
             self.field_types.append(caps)
 
-        print(type(self.fields))
+        #print(type(self.fields))
 
         self.values = [None] * (len(self.fields)+1)
 
@@ -216,7 +226,7 @@ class TPActivityPower(TPActivityCSV):
         _fields = ["SYS_STATUS.current_battery", "SYS_STATUS.voltage_battery", "VFR_HUD.airspeed"]
         super(TPActivityPower, self).__init__(state, label, _fields, directory)
         self.type = "power"
-        print("Beginning power response test\nUse 'tp stop <number> to indicate completion")
+        print("Beginning power response test\nUse 'tp stop <number|label>' to end the test")  # Move this to superclass?
 
     def kill(self):
         super(TPActivityPower, self).kill()
@@ -224,6 +234,13 @@ class TPActivityPower(TPActivityCSV):
 
         _data = read_csv(self.filename)
         print(_data.head())
+
+        analyzer = TPAnalyze()
+        analyzer.build_power_report(self.filename, self.label+".pdf")
+
+"""
+        # Old code for putting a plot up in a separate window
+        # Note that when this window is up, the simulator is frozen - but it will buffer commands in the console.
         yvalues = _data['SYS_STATUS.current_battery']/100.0*_data['SYS_STATUS.voltage_battery']/1000.0
         xvalues = _data['VFR_HUD.airspeed']
         yline = lowess(yvalues,xvalues,return_sorted=False)
@@ -235,9 +252,7 @@ class TPActivityPower(TPActivityCSV):
         plt.xlabel("Airspeed (m/s)")
         plt.ylabel("Watts Required (W)")
         plt.show()
-
-        analyzer = TPAnalyze()
-        analyzer.build_power_report(self.filename, self.filename+".pdf")
+"""
 
 
 class TPActivityTakeoff(TPActivityCSV):
@@ -303,10 +318,7 @@ class TPAnalyze:
         cells = 4
         amps = 10
 
-        pp = PdfPages(outfile)
-
         _data = read_csv(filename)
-        print(_data.head())
         yvalues = _data['SYS_STATUS.current_battery']/100.0*_data['SYS_STATUS.voltage_battery']/1000.0
         xvalues = _data['VFR_HUD.airspeed']
         yline = lowess(yvalues,xvalues,return_sorted=True)
@@ -319,61 +331,62 @@ class TPAnalyze:
         range_med = endurance_med * 3.6 * yline[:,0]
         range_low = endurance_low * 3.6 * yline[:,0]
 
+        with PdfPages(outfile) as pp:
 
-        # Plot 1: Power
-        plt.plot(xvalues,yvalues,'.',color='0.9')
-        plt.plot(yline[:,0],yline[:,1],'r',linewidth=3.0)
-        title_str = "Power Required vs Airspeed"
-        plt.title(title_str)
-        plt.xlabel("Airspeed (m/s)")
-        plt.ylabel("Watts Required (W)")
-        #pp.savefig(plt)
-        plt.savefig(pp,format='pdf')
-        plt.close()
+            # Plot 1: Power
+            plt.plot(xvalues,yvalues,'.',color='0.9')
+            plt.plot(yline[:,0],yline[:,1],'r',linewidth=3.0)
+            title_str = "Power Required vs Airspeed"
+            plt.title(title_str)
+            plt.xlabel("Airspeed (m/s)")
+            plt.ylabel("Watts Required (W)")
+            #pp.savefig(plt)
+            plt.savefig(pp,format='pdf')
+            plt.close()
 
-        # Plot 2: Current vs Airspeed
-        #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-        plt.plot(yline[:,0],yline[:,1]/(cells*4.2),'g',linewidth=2.0)
-        plt.plot(yline[:,0],yline[:,1]/(cells*3.7),'b',linewidth=2.0)
-        plt.plot(yline[:,0],yline[:,1]/(cells*3.0),'r',linewidth=2.0)
-        title_str = "Current Required vs Airspeed"
-        plt.title(title_str)
-        plt.xlabel("Airspeed (m/s)")
-        plt.ylabel("Current Required (A)")
-        plt.legend(['4.2V','3.7V','3.0V'],loc=2)
-        plt.savefig(pp,format='pdf')
-        plt.close()
+            # Plot 2: Current vs Airspeed
+            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
+            plt.plot(yline[:,0],yline[:,1]/(cells*4.2),'g',linewidth=2.0)
+            plt.plot(yline[:,0],yline[:,1]/(cells*3.7),'b',linewidth=2.0)
+            plt.plot(yline[:,0],yline[:,1]/(cells*3.0),'r',linewidth=2.0)
+            title_str = "Current Required vs Airspeed"
+            plt.title(title_str)
+            plt.xlabel("Airspeed (m/s)")
+            plt.ylabel("Current Required (A)")
+            plt.legend(['4.2V','3.7V','3.0V'],loc=2)
+            plt.savefig(pp,format='pdf')
+            plt.close()
 
-         # Plot 3: Endurance vs Airspeed
-        #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-        plt.plot(yline[:,0],endurance_high,'g',linewidth=2.0)
-        plt.plot(yline[:,0],endurance_med,'b',linewidth=2.0)
-        plt.plot(yline[:,0],endurance_low,'r',linewidth=2.0)
-        title_str = "Endurance vs Airspeed"
-        plt.title(title_str)
-        plt.xlabel("Airspeed (m/s)")
-        plt.ylabel("Endurance (hr)")
-        plt.legend(['4.2V','3.7V','3.0V'],loc=1)
-        #pp.savefig(plt)
-        plt.savefig(pp,format='pdf')
-        plt.close()
+             # Plot 3: Endurance vs Airspeed
+            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
+            plt.plot(yline[:,0],endurance_high,'g',linewidth=2.0)
+            plt.plot(yline[:,0],endurance_med,'b',linewidth=2.0)
+            plt.plot(yline[:,0],endurance_low,'r',linewidth=2.0)
+            title_str = "Endurance vs Airspeed"
+            plt.title(title_str)
+            plt.xlabel("Airspeed (m/s)")
+            plt.ylabel("Endurance (hr)")
+            plt.legend(['4.2V','3.7V','3.0V'],loc=1)
+            #pp.savefig(plt)
+            plt.savefig(pp,format='pdf')
+            plt.close()
 
 
-        # Plot 4: Range vs Airspeed
-        #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-        plt.plot(yline[:,0],range_high,'g',linewidth=2.0)
-        plt.plot(yline[:,0],range_med,'b',linewidth=2.0)
-        plt.plot(yline[:,0],range_low,'r',linewidth=2.0)
-        title_str = "Range vs Airspeed"
-        plt.title(title_str)
-        plt.xlabel("Airspeed (m/s)")
-        plt.ylabel("Range (km)")
-        plt.legend(['4.2V','3.7V','3.0V'],loc=1)
-        #pp.savefig(plt)
-        plt.savefig(pp,format='pdf')
-        plt.close()
+            # Plot 4: Range vs Airspeed
+            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
+            plt.plot(yline[:,0],range_high,'g',linewidth=2.0)
+            plt.plot(yline[:,0],range_med,'b',linewidth=2.0)
+            plt.plot(yline[:,0],range_low,'r',linewidth=2.0)
+            title_str = "Range vs Airspeed"
+            plt.title(title_str)
+            plt.xlabel("Airspeed (m/s)")
+            plt.ylabel("Range (km)")
+            plt.legend(['4.2V','3.7V','3.0V'],loc=1)
+            #pp.savefig(plt)
+            plt.savefig(pp,format='pdf')
+            plt.close()
 
-        pp.close()
+            #pp.close()      # Not necessary when using "with."  See: http://matplotlib.org/examples/pylab_examples/multipage_pdf.html
 
         for i in range(8,35):
             print(str(i) + ", " + str(self.lowess_predict(yline,i)))
