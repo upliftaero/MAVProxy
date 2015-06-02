@@ -1,4 +1,4 @@
-
+#!/usr/bin/env python
 """
   Data analysis module for analyzing data produced by MAVProxy testpilot module.
   This module generates an MS Word format flight test report.
@@ -12,6 +12,7 @@
 import sys
 import os
 import datetime
+import argparse
 
 from pandas.io.parsers import read_csv
 
@@ -23,7 +24,6 @@ from docx import Document
 from docx.shared import Inches
 
 import statsmodels.api as sm
-
 import mavproxy_testpilot as tp            # Currently only for configuration constants
 
 lowess = sm.nonparametric.lowess
@@ -156,13 +156,12 @@ class TPReport:
     def save(self):
         self.document.save(self.directory + os.sep + self.filebase + ".docx")
 
-
 if __name__ == '__main__':
+    parser = argparse.ArgumentParser(description='Analyze MAVlink log files and testpilot .csv files.')
+    parser.add_argument('csvfile', metavar="csv-file", help='testpilot .csv file to analyze')
+    args = parser.parse_args()
     directory = os.getcwd()
-    if len(sys.argv) != 2:
-        print("Usage: python tpanalyze.py <csv file>")
-        quit()
-    filename = sys.argv[1]
+    filename = args.csvfile
     if not os.path.isfile(filename):
         print("File '" + filename + "' does not exist")
         quit()
