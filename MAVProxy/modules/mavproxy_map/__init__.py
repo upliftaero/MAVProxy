@@ -45,6 +45,7 @@ class MapModule(mp_module.MPModule):
               ('showgps2pos', int, 1),
               ('showsimpos', int, 0),
               ('showahrs2pos', int, 0),
+              ('showahrs3pos', int, 0),
               ('brightness', float, 1),
               ('rallycircle', bool, False),
               ('loitercircle',bool, False)])
@@ -127,6 +128,7 @@ class MapModule(mp_module.MPModule):
                                                                    popup_menu=popup))
         loiter_rad = self.get_mav_param('WP_LOITER_RAD')
         labeled_wps = {}
+        self.mpstate.map.add_object(mp_slipmap.SlipClearLayer('LoiterCircles'))
         for i in range(len(self.mission_list)):
             next_list = self.mission_list[i]
             for j in range(len(next_list)):
@@ -135,9 +137,9 @@ class MapModule(mp_module.MPModule):
                     self.mpstate.map.add_object(mp_slipmap.SlipLabel(
                         'miss_cmd %u/%u' % (i,j), polygons[i][j], str(next_list[j]), 'Mission', colour=(0,255,255)))
 
-                    if (self.module('wp').wploader.wp_is_loiter(next_list[j])
-                        and self.map_settings.loitercircle):
-                        self.mpstate.map.add_object(mp_slipmap.SlipCircle('Loiter Cirlce %u' % (next_list[j] + 1), 'LoiterCircles', polygons[i][j], abs(loiter_rad), (255, 255, 255), 2))
+                    if (self.map_settings.loitercircle and
+                        self.module('wp').wploader.wp_is_loiter(next_list[j])):
+                        self.mpstate.map.add_object(mp_slipmap.SlipCircle('Loiter Circle %u' % (next_list[j] + 1), 'LoiterCircles', polygons[i][j], abs(loiter_rad), (255, 255, 255), 2))
 
                     labeled_wps[next_list[j]] = (i,j)
 
@@ -403,7 +405,11 @@ class MapModule(mp_module.MPModule):
         if m.get_type() == "AHRS2" and self.map_settings.showahrs2pos:
             self.create_vehicle_icon('AHRS2' + vehicle, 'blue')
             self.mpstate.map.set_position('AHRS2' + vehicle, (m.lat*1.0e-7, m.lng*1.0e-7), rotation=math.degrees(m.yaw))
-    
+
+        if m.get_type() == "AHRS3" and self.map_settings.showahrs3pos:
+            self.create_vehicle_icon('AHRS3' + vehicle, 'orange')
+            self.mpstate.map.set_position('AHRS3' + vehicle, (m.lat*1.0e-7, m.lng*1.0e-7), rotation=math.degrees(m.yaw))
+
         if m.get_type() == "GPS_RAW_INT" and self.map_settings.showgpspos:
             (lat, lon) = (m.lat*1.0e-7, m.lon*1.0e-7)
             if lat != 0 or lon != 0:

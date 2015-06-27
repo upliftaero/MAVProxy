@@ -1,6 +1,6 @@
 from setuptools import setup
 
-version = "1.4.13"
+version = "1.4.23"
 
 setup(name='MAVProxy',
       version=version,
@@ -33,6 +33,7 @@ on how to use MAVProxy.''',
                 'MAVProxy.modules',
                 'MAVProxy.modules.mavproxy_map',
                 'MAVProxy.modules.mavproxy_misseditor',
+                'MAVProxy.modules.mavproxy_smartcamera',
                 'MAVProxy.modules.lib',
                 'MAVProxy.modules.lib.ANUGA',
                 'MAVProxy.modules.lib.optparse_gui'],

@@ -34,6 +34,7 @@ parser.add_option("--debug", action='store_true', default=False, help="show debu
 parser.add_option("--multi", action='store_true', default=False, help="show multiple flights on one map")
 parser.add_option("--types", default=None, help="types of position messages to show")
 parser.add_option("--ekf-sample", type='int', default=1, help="sub-sampling of EKF messages")
+parser.add_option("--rate", type='int', default=0, help="maximum message rate to display (0 means all points)")
 
 (opts, args) = parser.parse_args()
 
@@ -133,6 +134,9 @@ def mavflightview(filename):
         if opts.ahr2:
             types.extend(['AHR2', 'AHRS2', 'GPS'])
     print("Looking for types %s" % str(types))
+
+    last_timestamps = {}
+
     while True:
         try:
             m = mlog.recv_match(type=types)
@@ -140,7 +144,10 @@ def mavflightview(filename):
                 break
         except Exception:
             break
-        if m.get_type() == 'MISSION_ITEM':
+
+        type = m.get_type()
+        
+        if type == 'MISSION_ITEM':
             try:
                 while m.seq > wp.count():
                     print("Adding dummy WP %u" % wp.count())
@@ -149,7 +156,7 @@ def mavflightview(filename):
             except Exception:
                 pass
             continue
-        if m.get_type() == 'CMD':
+        if type == 'CMD':
             m = mavutil.mavlink.MAVLink_mission_item_message(0,
                                                              0,
                                                              m.CNum,
@@ -170,7 +177,7 @@ def mavflightview(filename):
             continue
         if opts.mode is not None and mlog.flightmode.lower() != opts.mode.lower():
             continue
-        if m.get_type() in ['GPS','GPS2']:
+        if type in ['GPS','GPS2']:
             status = getattr(m, 'Status', None)
             if status is None:
                 status = getattr(m, 'FixType', None)
@@ -189,7 +196,7 @@ def mavflightview(filename):
                     print("Can't find longitude on GPS message")
                     print(m)
                     break                    
-        elif m.get_type() == 'EKF1':
+        elif type in ['EKF1', 'ANU1']:
             pos = mavextra.ekf1_pos(m)
             if pos is None:
                 continue
@@ -197,20 +204,22 @@ def mavflightview(filename):
             if ekf_counter % opts.ekf_sample != 0:
                 continue
             (lat, lng) = pos            
-        elif m.get_type() == 'AHR2':
+        elif type in ['ANU5']:
+            (lat, lng) = (m.Alat*1.0e-7, m.Alng*1.0e-7)
+        elif type in ['AHR2', 'POS']:
             (lat, lng) = (m.Lat, m.Lng)
-        elif m.get_type() == 'AHRS2':
+        elif type == 'AHRS2':
             (lat, lng) = (m.lat*1.0e-7, m.lng*1.0e-7)
         else:
             lat = m.lat * 1.0e-7
             lng = m.lon * 1.0e-7
 
         # automatically add new types to instances
-        if m.get_type() not in instances:
-            instances[m.get_type()] = len(instances)
+        if type not in instances:
+            instances[type] = len(instances)
             while len(instances) >= len(path):
                 path.append([])
-        instance = instances[m.get_type()]
+        instance = instances[type]
 
         if abs(lat)>0.01 or abs(lng)>0.01:
             fmode = getattr(mlog, 'flightmode','')
@@ -230,7 +239,10 @@ def mavflightview(filename):
                 b = 205
             colour = (r,g,b)
             point = (lat, lng, colour)
-            path[instance].append(point)
+
+            if opts.rate == 0 or not type in last_timestamps or m._timestamp - last_timestamps[type] > 1.0/opts.rate:
+                last_timestamps[type] = m._timestamp
+                path[instance].append(point)
     if len(path[0]) == 0:
         print("No points to plot")
         return

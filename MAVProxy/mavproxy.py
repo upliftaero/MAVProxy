@@ -107,6 +107,8 @@ class MAVFunctions(object):
         self.param_set = param_set
         self.get_mav_param = get_mav_param
         self.say = say_text
+        # input handler can be overridden by a module
+        self.input_handler = None
 
 class MPState(object):
     '''holds state of mavproxy'''
@@ -133,7 +135,7 @@ class MPState(object):
                         range=(0,100), increment=1, tab='Announcements'),
               MPSetting('distreadout', int, 200, 'Distance Readout', range=(0,10000), increment=1),
 
-              MPSetting('moddebug', int, 0, 'Module Debug Level', range=(0,3), increment=1, tab='Debug'),
+              MPSetting('moddebug', int, opts.moddebug, 'Module Debug Level', range=(0,3), increment=1, tab='Debug'),
               MPSetting('compdebug', int, 0, 'Computation Debug Mask', range=(0,3), tab='Debug'),
               MPSetting('flushlogs', bool, False, 'Flush logs on every packet'),
               MPSetting('requireexit', bool, False, 'Require exit command'),
@@ -148,7 +150,7 @@ class MPState(object):
 
               MPSetting('source_system', int, 255, 'MAVLink Source system', range=(0,255), increment=1, tab='MAVLink'),
               MPSetting('source_component', int, 0, 'MAVLink Source component', range=(0,255), increment=1),
-              MPSetting('target_system', int, -1, 'MAVLink target system', range=(-1,255), increment=1),
+              MPSetting('target_system', int, 0, 'MAVLink target system', range=(0,255), increment=1),
               MPSetting('target_component', int, 0, 'MAVLink target component', range=(0,255), increment=1)
             ])
 
@@ -178,6 +180,8 @@ class MPState(object):
         self.select_extra = {}
         self.continue_mode = False
         self.aliases = {}
+        import platform
+        self.system = platform.system()
 
     def module(self, name):
         '''Find a public module (most modules are private)'''
@@ -410,6 +414,12 @@ def process_stdin(line):
     '''handle commands from user'''
     if line is None:
         sys.exit(0)
+
+    # allow for modules to override input handling
+    if mpstate.functions.input_handler is not None:
+          mpstate.functions.input_handler(line)
+          return
+    
     line = line.strip()
 
     if mpstate.status.setup_mode:
@@ -486,6 +496,9 @@ def process_master(m):
         mpstate.logqueue_raw.put(str(s))
 
     if mpstate.status.setup_mode:
+        if mpstate.system == 'Windows':
+           # strip nsh ansi codes
+           s = s.replace("\033[K","")
         sys.stdout.write(str(s))
         sys.stdout.flush()
         return
@@ -787,7 +800,7 @@ if __name__ == '__main__':
                       metavar="DEVICE[,BAUD]", help="MAVLink output port and optional baud rate",
                       default=[])
     parser.add_option("--baudrate", dest="baudrate", type='int',
-                      help="default serial baud rate", default=115200)
+                      help="default serial baud rate", default=57600)
     parser.add_option("--sitl", dest="sitl",  default=None, help="SITL output port")
     parser.add_option("--streamrate",dest="streamrate", default=4, type='int',
                       help="MAVLink stream rate")
@@ -796,7 +809,7 @@ if __name__ == '__main__':
     parser.add_option("--source-component", dest='SOURCE_COMPONENT', type='int',
                       default=0, help='MAVLink source component for this GCS')
     parser.add_option("--target-system", dest='TARGET_SYSTEM', type='int',
-                      default=-1, help='MAVLink target master system')
+                      default=0, help='MAVLink target master system')
     parser.add_option("--target-component", dest='TARGET_COMPONENT', type='int',
                       default=0, help='MAVLink target master component')
     parser.add_option("--logfile", dest="logfile", help="MAVLink master logfile",
@@ -828,6 +841,7 @@ if __name__ == '__main__':
     parser.add_option("-c", "--continue", dest='continue_mode', action='store_true', default=False, help="continue logs")
     parser.add_option("--dialect",  default="ardupilotmega", help="MAVLink dialect")
     parser.add_option("--rtscts",  action='store_true', help="enable hardware RTS/CTS flow control")
+    parser.add_option("--moddebug",  type=int, help="module debug level", default=0)
     parser.add_option("--mission", dest="mission", help="mission name", default=None)
     parser.add_option("--daemon", action='store_true', help="run in daemon mode, do not start interactive shell")
     parser.add_option("--profile", action='store_true', help="run the Yappi python profiler")
