@@ -1,31 +1,37 @@
 """
   MAVProxy Test Pilot module for gathering data and characterizing aircraft performance
 
- Author: Mark Jacobsen
+ Authors:   Mark Jacobsen
+            Kevin Wells
 """
 
-# TODO integrate directory setting
-# TODO fix naming convention for test numbers
-
+# TODO fix naming convention for test numbers - is this complete?
 
 from pymavlink import mavutil
 import re, os, sys, time
 import csv
-import statsmodels.api as sm
+#import statsmodels.api as sm
 import numpy
 import pandas
-from pandas.io.parsers import *
-import matplotlib.pyplot as plt
-import matplotlib.image as mpimg
-from matplotlib.backends.backend_pdf import PdfPages
+from pandas.io.parsers import read_csv
 import math
 
-lowess = sm.nonparametric.lowess
+from MAVProxy.modules.lib import live_graph
+from MAVProxy.modules.lib import mp_module
+
+import tpanalyze
+
+#lowess = sm.nonparametric.lowess
 takeoff_epsilon = 2
 
-from MAVProxy.modules.lib import live_graph
+KEY_AIRCRAFT    = "aircraft"
+KEY_WEIGHT      = "weight"
+KEY_MOTOR       = "motor"
+KEY_PROP        = "prop"
+KEY_COMMENT     = "comment"
 
-from MAVProxy.modules.lib import mp_module
+CONFIG_FILE_EXTENSION       = ".config"
+DEFAULT_CONFIG_FILE         = "default" + CONFIG_FILE_EXTENSION
 
 class TestPilotModule(mp_module.MPModule):
     def __init__(self, mpstate):
@@ -43,14 +49,10 @@ class TestPilotModule(mp_module.MPModule):
 
         # TestPilot module variables
         self.activities = []
-        self.aircraft = ""
-        self.prop = ""
-        self.motor = ""
-        self.weight = ""
-        self.comment = ""
+        self.configuration = {}
         self.directory = os.getcwd()
 
-        self.add_command('tp',self.cmd_testpilot,"record and analyze flight data","<start|stop|directory|aircraft|weight|motor|prop|comment>")
+        self.add_command('tp',self.cmd_testpilot,"record and analyze flight data","<start|stop|directory|aircraft|weight|motor|prop|comment|write|read>")
 
     def cmd_testpilot(self, args):
         # With no arguments, display status
@@ -65,6 +67,8 @@ class TestPilotModule(mp_module.MPModule):
             print("motor <motor name>")
             print("prop <prop name>")
             print("comment <comment>")
+            print("write # Writes aircraft configuration file")
+            print("read  # Reads aircraft configuration file")
         elif args[0] == "start":
             self.testpilot_start_activity(args)
         elif args[0] == "stop":
@@ -72,30 +76,45 @@ class TestPilotModule(mp_module.MPModule):
         elif args[0] == "directory":
             self.directory = ' '.join(args[1:])
             print("Directory set: " + self.directory)
-        elif args[0] == "aircraft":
-            self.aircraft = ' '.join(args[1:])
-            print("Aircraft set: " + self.aircraft)
-        elif args[0] == "weight":
-            self.weight = ' '.join(args[1:])
-            print("Weight set: " + self.weight)
-        elif args[0] == "motor":
-            self.motor = ' '.join(args[1:])
-            print("Motor set: " + self.motor)
-        elif args[0] == "prop":
-            self.prop = ' '.join(args[1:])
-            print("Prop set: " + self.prop)
-        elif args[0] == "comment":
-            self.comment = ' '.join(args[1:])
-            print("Comment set: " + self.comment)
+        elif args[0] == KEY_AIRCRAFT:
+            self.configuration[KEY_AIRCRAFT] = ' '.join(args[1:])
+            print("Aircraft set: " + self.configuration[KEY_AIRCRAFT])
+        elif args[0] == KEY_WEIGHT:
+            self.configuration[KEY_WEIGHT] = ' '.join(args[1:])
+            print("Weight set: " + self.configuration[KEY_WEIGHT])
+        elif args[0] == KEY_MOTOR:
+            self.configuration[KEY_MOTOR] = ' '.join(args[1:])
+            print("Motor set: " + self.configuration[KEY_MOTOR])
+        elif args[0] == KEY_PROP:
+            self.configuration[KEY_PROP] = ' '.join(args[1:])
+            print("Prop set: " + self.configuration[KEY_PROP])
+        elif args[0] == KEY_COMMENT:
+            self.configuration[KEY_COMMENT] = ' '.join(args[1:])
+            print("Comment set: " + self.configuration[KEY_COMMENT])
+        elif args[0] == "write":
+            with open(self.directory + os.sep + DEFAULT_CONFIG_FILE, 'w') as paramfile:
+                paramfile.write(str(self.configuration))
+        elif args[0] == "read":
+            with open(self.directory + os.sep + DEFAULT_CONFIG_FILE, 'r') as paramfile:
+                self.configuration = {}
+                dict = paramfile.read()
+                self.configuration = eval(dict) # This is a security risk
+        else:
+            print("Invalid command: " + args[0])
 
     def testpilot_show_status(self):
         print("TestPilot module configuration:")
         print("Working directory: " + self.directory + "\n")
-        print("Aircraft type:     " + self.aircraft + "\n")
-        print("Weight:            " + self.weight + "\n")
-        print("Motor:             " + self.motor + "\n")
-        print("Prop:              " + self.prop + "\n")
-        print("Comment:           " + self.comment + "\n")
+        aircraft = self.configuration[KEY_AIRCRAFT] if KEY_AIRCRAFT in self.configuration else ""
+        print("Aircraft type:     " + aircraft + "\n")
+        weight = self.configuration[KEY_WEIGHT] if KEY_WEIGHT in self.configuration else ""
+        print("Weight:            " + weight + "\n")
+        motor = self.configuration[KEY_MOTOR] if KEY_MOTOR in self.configuration else ""
+        print("Motor:             " + motor + "\n")
+        prop = self.configuration[KEY_PROP] if KEY_PROP in self.configuration else ""
+        print("Prop:              " + prop + "\n")
+        comment = self.configuration[KEY_COMMENT] if KEY_COMMENT in self.configuration else ""
+        print("Comment:           " + comment + "\n")
         print("----------------------------------\n")
         print("Activities in progress:\n")
         for i in range(0,len(self.activities)):
@@ -117,7 +136,7 @@ class TestPilotModule(mp_module.MPModule):
 
         for key in self.templates.keys():
             if key == activityname:
-                instance = self.templates[key](self,label,self.directory)
+                instance = self.templates[key](self,label,self.directory,self.configuration)
                 self.activities.append(instance)
                 break
 
@@ -170,16 +189,18 @@ class TestPilotActivity(object):
         return
 
 class TPActivityCSV(TestPilotActivity):
-    def __init__(self,state,label,fields,directory):
+    def __init__(self,state,label,fields,directory,configuration):
         super(TPActivityCSV, self).__init__(state,label)
         self.fields = fields
         self.state = state
         self.field_types = []
         self.msg_types = set()
-        self.filename = directory + os.sep + label + ".csv"
+        self.directory = directory
+        self.configuration = configuration
+        self.filename = label + ".csv"
+        self.fullfilename = self.directory + os.sep + self.filename
         self.starttime = time.time()
         self.label = label
-        #self.name = label + " (csv)"
 
         re_caps = re.compile('[A-Z_][A-Z0-9_]+')
         for f in self.fields:
@@ -191,9 +212,9 @@ class TPActivityCSV(TestPilotActivity):
 
         self.values = [None] * (len(self.fields)+1)
 
-        print("Filename: " + self.filename)
+        print("Filename: " + self.fullfilename)
         try:
-            self.csvfile = open(self.filename, 'wb')
+            self.csvfile = open(self.fullfilename, 'wb')
             self.writer = csv.writer(self.csvfile, delimiter=',',
                             quotechar='|', quoting=csv.QUOTE_MINIMAL)
             header = list(self.fields)
@@ -222,9 +243,9 @@ class TPActivityCSV(TestPilotActivity):
 
 
 class TPActivityPower(TPActivityCSV):
-    def __init__(self,state,label,directory):
+    def __init__(self,state,label,directory,configuration):
         _fields = ["SYS_STATUS.current_battery", "SYS_STATUS.voltage_battery", "VFR_HUD.airspeed"]
-        super(TPActivityPower, self).__init__(state, label, _fields, directory)
+        super(TPActivityPower, self).__init__(state, label, _fields, directory,configuration)
         self.type = "power"
         print("Beginning power response test\nUse 'tp stop <number|label>' to end the test")  # Move this to superclass?
 
@@ -232,11 +253,11 @@ class TPActivityPower(TPActivityCSV):
         super(TPActivityPower, self).kill()
         print("Terminating power activity")
 
-        _data = read_csv(self.filename)
+        _data = read_csv(self.fullfilename)
         print(_data.head())
 
-        analyzer = TPAnalyze()
-        analyzer.build_power_report(self.filename, self.label+".pdf")
+        analyzer = tpanalyze.TPAnalyze(self.directory, self.configuration)
+        analyzer.build_power_report(self.filename)
 
 """
         # Old code for putting a plot up in a separate window
@@ -256,9 +277,9 @@ class TPActivityPower(TPActivityCSV):
 
 
 class TPActivityTakeoff(TPActivityCSV):
-    def __init__(self,state,label,directory):
+    def __init__(self,state,label,directory,configuration):
         _fields = ["VFR_HUD.alt", "GLOBAL_POSITION_INT.lat", "GLOBAL_POSITION_INT.lon"]
-        super(TPActivityTakeoff, self).__init__(state, label, _fields, directory)
+        super(TPActivityTakeoff, self).__init__(state, label, _fields, directory, configuration)
         self.type = "takeoff"
         print("Beginning takeoff performance test\nUse 'tp stop <number> to indicate completion")
 
@@ -266,7 +287,7 @@ class TPActivityTakeoff(TPActivityCSV):
         super(TPActivityTakeoff, self).kill()
         print("Terminating takeoff activity")
 
-        _data = read_csv(self.filename)
+        _data = read_csv(self.fullfilename)
         print(_data.head())
         _data['distance'] = 0
         print("A")
@@ -310,97 +331,6 @@ class TPActivityTakeoff(TPActivityCSV):
         lowess = sm.nonparametric.lowess
 
 
-class TPAnalyze:
-    def __init__(self):
-        return
-
-    def build_power_report(self, filename, outfile):
-        cells = 4
-        amps = 10
-
-        _data = read_csv(filename)
-        yvalues = _data['SYS_STATUS.current_battery']/100.0*_data['SYS_STATUS.voltage_battery']/1000.0
-        xvalues = _data['VFR_HUD.airspeed']
-        yline = lowess(yvalues,xvalues,return_sorted=True)
-
-        endurance_high = amps/(yline[:,1]/(cells*4.2))
-        endurance_med = amps/(yline[:,1]/(cells*3.7))
-        endurance_low = amps/(yline[:,1]/(cells*3.0))
-
-        range_high = endurance_high * 3.6 * yline[:,0]
-        range_med = endurance_med * 3.6 * yline[:,0]
-        range_low = endurance_low * 3.6 * yline[:,0]
-
-        with PdfPages(outfile) as pp:
-
-            # Plot 1: Power
-            plt.plot(xvalues,yvalues,'.',color='0.9')
-            plt.plot(yline[:,0],yline[:,1],'r',linewidth=3.0)
-            title_str = "Power Required vs Airspeed"
-            plt.title(title_str)
-            plt.xlabel("Airspeed (m/s)")
-            plt.ylabel("Watts Required (W)")
-            #pp.savefig(plt)
-            plt.savefig(pp,format='pdf')
-            plt.close()
-
-            # Plot 2: Current vs Airspeed
-            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-            plt.plot(yline[:,0],yline[:,1]/(cells*4.2),'g',linewidth=2.0)
-            plt.plot(yline[:,0],yline[:,1]/(cells*3.7),'b',linewidth=2.0)
-            plt.plot(yline[:,0],yline[:,1]/(cells*3.0),'r',linewidth=2.0)
-            title_str = "Current Required vs Airspeed"
-            plt.title(title_str)
-            plt.xlabel("Airspeed (m/s)")
-            plt.ylabel("Current Required (A)")
-            plt.legend(['4.2V','3.7V','3.0V'],loc=2)
-            plt.savefig(pp,format='pdf')
-            plt.close()
-
-             # Plot 3: Endurance vs Airspeed
-            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-            plt.plot(yline[:,0],endurance_high,'g',linewidth=2.0)
-            plt.plot(yline[:,0],endurance_med,'b',linewidth=2.0)
-            plt.plot(yline[:,0],endurance_low,'r',linewidth=2.0)
-            title_str = "Endurance vs Airspeed"
-            plt.title(title_str)
-            plt.xlabel("Airspeed (m/s)")
-            plt.ylabel("Endurance (hr)")
-            plt.legend(['4.2V','3.7V','3.0V'],loc=1)
-            #pp.savefig(plt)
-            plt.savefig(pp,format='pdf')
-            plt.close()
-
-
-            # Plot 4: Range vs Airspeed
-            #plt.plot(xvalues,yvalues/(cells*4.2),'.',color='0.9')
-            plt.plot(yline[:,0],range_high,'g',linewidth=2.0)
-            plt.plot(yline[:,0],range_med,'b',linewidth=2.0)
-            plt.plot(yline[:,0],range_low,'r',linewidth=2.0)
-            title_str = "Range vs Airspeed"
-            plt.title(title_str)
-            plt.xlabel("Airspeed (m/s)")
-            plt.ylabel("Range (km)")
-            plt.legend(['4.2V','3.7V','3.0V'],loc=1)
-            #pp.savefig(plt)
-            plt.savefig(pp,format='pdf')
-            plt.close()
-
-            #pp.close()      # Not necessary when using "with."  See: http://matplotlib.org/examples/pylab_examples/multipage_pdf.html
-
-        for i in range(8,35):
-            print(str(i) + ", " + str(self.lowess_predict(yline,i)))
-
-    def lowess_predict(self,fitted,value):
-        i = 0
-        if fitted[i,0] > value:
-            return -1
-
-        while value > fitted[i,0]:
-            i = i + 1
-            if i >= fitted.shape[0]:
-                return -1
-        return fitted[i,1]
 
 
 def measure_distance(lat1,lon1,lat2,lon2):
