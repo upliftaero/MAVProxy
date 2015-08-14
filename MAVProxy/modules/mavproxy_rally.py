@@ -23,18 +23,18 @@ class RallyModule(mp_module.MPModule):
         self.abort_previous_send_time = 0
         self.abort_ack_received = True
 
+        self.menu_added_console = False
+        self.menu_added_map = False
         if mp_util.has_wxpython:
-            self.menu_added_console = False
-            self.menu_added_map = False
             self.menu = MPMenuSubMenu('Rally',
                                   items=[MPMenuItem('Clear', 'Clear', '# rally clear'),
                                          MPMenuItem('List', 'List', '# rally list'),
                                          MPMenuItem('Load', 'Load', '# rally load ',
-                                                    handler=MPMenuCallFileDialog(flags=wx.FD_OPEN,
+                                                    handler=MPMenuCallFileDialog(flags=('open',),
                                                                                  title='Rally Load',
                                                                                  wildcard='*.rally')),
                                          MPMenuItem('Save', 'Save', '# rally save ',
-                                                    handler=MPMenuCallFileDialog(flags=wx.FD_SAVE|wx.FD_OVERWRITE_PROMPT,
+                                                    handler=MPMenuCallFileDialog(flags=('save', 'overwrite_prompt'),
                                                                                  title='Rally Save',
                                                                                  wildcard='*.rally')),
                                          MPMenuItem('Add', 'Add', '# rally add ',

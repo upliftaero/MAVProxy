@@ -23,7 +23,7 @@ from MAVProxy.modules.lib import dumpstacks
 try:
       from multiprocessing import freeze_support
       from pymavlink import mavwp, mavutil
-      import wx, matplotlib, HTMLParser
+      import matplotlib, HTMLParser
       try:
             import readline
       except ImportError:
@@ -151,12 +151,14 @@ class MPState(object):
               MPSetting('source_system', int, 255, 'MAVLink Source system', range=(0,255), increment=1, tab='MAVLink'),
               MPSetting('source_component', int, 0, 'MAVLink Source component', range=(0,255), increment=1),
               MPSetting('target_system', int, 0, 'MAVLink target system', range=(0,255), increment=1),
-              MPSetting('target_component', int, 0, 'MAVLink target component', range=(0,255), increment=1)
+              MPSetting('target_component', int, 0, 'MAVLink target component', range=(0,255), increment=1),
+              MPSetting('state_basedir', str, None, 'base directory for logs and aircraft directories')
             ])
 
         self.completions = {
             "script"         : ["(FILENAME)"],
             "set"            : ["(SETTING)"],
+            "status"         : ["(VARIABLE)"],
             "module"    : ["list",
                            "load (AVAILMODULES)",
                            "<unload|reload> (LOADEDMODULES)"]
@@ -471,7 +473,7 @@ def process_stdin(line):
     try:
         fn(args[1:])
     except Exception as e:
-        print("ERROR in command: %s" % str(e))
+        print("ERROR in command %s: %s" % (args[1:], str(e)))
         if mpstate.settings.moddebug > 1:
             traceback.print_exc()
 
@@ -534,6 +536,9 @@ def process_mavlink(slave):
         return
     if mpstate.settings.mavfwd and not mpstate.status.setup_mode:
         for m in msgs:
+            if mpstate.status.watch is not None:
+                if fnmatch.fnmatch(m.get_type().upper(), mpstate.status.watch.upper()):
+                    mpstate.console.writeln('> '+ str(m))
             mpstate.master().write(m.get_msgbuf())
     mpstate.status.counters['Slave'] += 1
 
@@ -562,19 +567,19 @@ def log_writer():
             mpstate.logfile.flush()
             mpstate.logfile_raw.flush()
 
-def open_logs():
-    '''open log files'''
-    if opts.append_log or opts.continue_mode:
-        mode = 'a'
-    else:
-        mode = 'w'
-    logfile = opts.logfile
+# If state_basedir is NOT set then paths for logs and aircraft
+# directories are relative to mavproxy's cwd
+def log_paths():
+    '''Returns tuple (logdir, telemetry_log_filepath, raw_telemetry_log_filepath)'''
     if opts.aircraft is not None:
         if opts.mission is not None:
             print(opts.mission)
             dirname = "%s/logs/%s/Mission%s" % (opts.aircraft, time.strftime("%Y-%m-%d"), opts.mission)
         else:
             dirname = "%s/logs/%s" % (opts.aircraft, time.strftime("%Y-%m-%d"))
+        # dirname is currently relative.  Possibly add state_basedir:
+        if mpstate.settings.state_basedir is not None:
+            dirname = os.path.join(mpstate.settings.state_basedir,dirname)
         mkdir_p(dirname)
         highest = None
         for i in range(1, 10000):
@@ -587,18 +592,31 @@ def open_logs():
         elif os.path.exists(fdir):
             print("Flight logs full")
             sys.exit(1)
-        mkdir_p(fdir)
-        print(fdir)
-        logfile = os.path.join(fdir, 'flight.tlog')
-        mpstate.status.logdir = fdir
-    mpstate.logfile_name = logfile
-    mpstate.logfile = open(logfile, mode=mode)
-    mpstate.logfile_raw = open(logfile+'.raw', mode=mode)
-    print("Logging to %s" % logfile)
+        logname = 'flight.tlog'
+        logdir = fdir
+    else:
+        logname = os.path.basename(opts.logfile)
+        dir_path = os.path.dirname(opts.logfile)
+        if not os.path.isabs(dir_path) and mpstate.settings.state_basedir is not None:
+            dir_path = os.path.join(mpstate.settings.state_basedir,dir_path)
+        logdir = dir_path
 
-    # queues for logging
-    mpstate.logqueue = Queue.Queue()
-    mpstate.logqueue_raw = Queue.Queue()
+    mkdir_p(logdir)
+    return (logdir,
+            os.path.join(logdir, logname),
+            os.path.join(logdir, logname + '.raw'))
+
+
+def open_telemetry_logs(logpath_telem, logpath_telem_raw):
+    '''open log files'''
+    if opts.append_log or opts.continue_mode:
+        mode = 'a'
+    else:
+        mode = 'w'
+    mpstate.logfile = open(logpath_telem, mode=mode)
+    mpstate.logfile_raw = open(logpath_telem_raw, mode=mode)
+    print("Log Directory: %s" % mpstate.status.logdir)
+    print("Telemetry log: %s" % logpath_telem)
 
     # use a separate thread for writing to the logfile to prevent
     # delays during disk writes (important as delays can be long if camera
@@ -679,6 +697,9 @@ def periodic_tasks():
                     traceback.print_exception(exc_type, exc_value, exc_traceback,
                                               limit=2, file=sys.stdout)
 
+        # also see if the module should be unloaded:
+        if m.needs_unloading:
+            unload_module(m.name)
 
 def main_loop():
     '''main processing loop'''
@@ -686,6 +707,7 @@ def main_loop():
         for master in mpstate.mav_master:
             send_heartbeat(master)
             if master.linknum == 0:
+                print("Waiting for heartbeat from %s" % master.address)
                 master.wait_heartbeat()
         set_stream_rates()
 
@@ -845,6 +867,9 @@ if __name__ == '__main__':
     parser.add_option("--mission", dest="mission", help="mission name", default=None)
     parser.add_option("--daemon", action='store_true', help="run in daemon mode, do not start interactive shell")
     parser.add_option("--profile", action='store_true', help="run the Yappi python profiler")
+    parser.add_option("--state-basedir", default=None, help="base directory for logs and aircraft directories")
+    parser.add_option("--version", action='store_true', help="version information")
+    parser.add_option("--default-modules", default="log,wp,rally,fence,param,relay,tuneopt,arm,mode,calibration,rc,auxopt,misc,cmdlong,battery,terrain,output", help='default module list')
 
     (opts, args) = parser.parse_args()
 
@@ -857,11 +882,23 @@ if __name__ == '__main__':
     from pymavlink import mavutil, mavparm
     mavutil.set_dialect(opts.dialect)
 
+    #version information
+    if opts.version:
+        import pkg_resources
+        version = pkg_resources.require("mavproxy")[0].version
+        print "MAVProxy is a modular ground station using the mavlink protocol"
+        print "MAVProxy Version: " + version
+        sys.exit(1)
+    
     # global mavproxy state
     mpstate = MPState()
     mpstate.status.exit = False
     mpstate.command_map = command_map
     mpstate.continue_mode = opts.continue_mode
+    # queues for logging
+    mpstate.logqueue = Queue.Queue()
+    mpstate.logqueue_raw = Queue.Queue()
+
 
     if opts.speech:
         # start the speech-dispatcher early, so it doesn't inherit any ports from
@@ -893,9 +930,10 @@ if __name__ == '__main__':
     # Listen for kill signals to cleanly shutdown modules
     fatalsignals = [signal.SIGTERM]
     try:
-          fatalsignals.append(signal.SIGHUP, signal.SIGQUIT)
+        fatalsignals.append(signal.SIGHUP)
+        fatalsignals.append(signal.SIGQUIT)
     except Exception:
-          pass
+        pass
     if opts.daemon: # SIGINT breaks readline parsing - if we are interactive, just let things die
         fatalsignals.append(signal.SIGINT)
 
@@ -915,9 +953,10 @@ if __name__ == '__main__':
     if not opts.master and len(serial_list) == 1:
           print("Connecting to %s" % serial_list[0])
           mpstate.module('link').link_add(serial_list[0].device)
+    elif not opts.master:
+          wifi_device = '0.0.0.0:14550'
+          mpstate.module('link').link_add(wifi_device)
 
-    # log all packets from the master, for later replay
-    open_logs()
 
     # open any mavlink output ports
     for port in opts.output:
@@ -929,6 +968,9 @@ if __name__ == '__main__':
     mpstate.settings.streamrate = opts.streamrate
     mpstate.settings.streamrate2 = opts.streamrate
 
+    if opts.state_basedir is not None:
+        mpstate.settings.state_basedir = opts.state_basedir
+
     msg_period = mavutil.periodic_event(1.0/15)
     heartbeat_period = mavutil.periodic_event(1)
     heartbeat_check_period = mavutil.periodic_event(0.33)
@@ -939,11 +981,12 @@ if __name__ == '__main__':
     if opts.setup:
         mpstate.rl.set_prompt("")
 
+    # call this early so that logdir is setup based on --aircraft
+    (mpstate.status.logdir, logpath_telem, logpath_telem_raw) = log_paths()
+
     if not opts.setup:
         # some core functionality is in modules
-        standard_modules = ['log', 'wp', 'rally','fence','param','relay',
-                            'tuneopt','arm','mode','calibration','rc','auxopt','misc','cmdlong',
-                            'battery','terrain','output']
+        standard_modules = opts.default_modules.split(',')
         for m in standard_modules:
             load_module(m, quiet=True)
 
@@ -983,6 +1026,9 @@ if __name__ == '__main__':
     if opts.profile:
         import yappi    # We do the import here so that we won't barf if run normally and yappi not available
         yappi.start()
+
+    # log all packets from the master, for later replay
+    open_telemetry_logs(logpath_telem, logpath_telem_raw)
 
     # run main loop as a thread
     mpstate.status.thread = threading.Thread(target=main_loop, name='main_loop')

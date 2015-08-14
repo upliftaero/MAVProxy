@@ -5,6 +5,7 @@ readline handling for mavproxy
 import sys, glob, os
 
 rline_mpstate = None
+redisplay = None
 
 class rline(object):
     '''async readline abstraction'''
@@ -29,6 +30,10 @@ class rline(object):
         if prompt != self.prompt:
             self.prompt = prompt
             sys.stdout.write(prompt)
+            try:
+                redisplay()
+            except Exception as ex:
+                pass
 
 
 def complete_alias(text):
@@ -152,8 +157,14 @@ def complete(text, state):
         last_clist = glob.glob(text+'*')
     ret = []
     for c in last_clist:
-        if c.startswith(text):
+        if c.startswith(text) or c.startswith(text.upper()):
             ret.append(c)
+    if len(ret) == 0:
+        # if we had no matches then try case insensitively
+        text = text.lower()
+        for c in last_clist:
+            if c.lower().startswith(text):
+                ret.append(c)
     ret.append(None)
     last_clist = ret
     return last_clist[state]
@@ -170,6 +181,7 @@ try:
     readline.set_completer_delims(' \t\n;')
     readline.parse_and_bind("tab: complete")
     readline.set_completer(complete)
+    redisplay = readline.redisplay
 except Exception:
     pass
 
