@@ -118,7 +118,7 @@ class ParamState:
     def handle_command(self, master, mpstate, args):
         '''handle parameter commands'''
         param_wildcard = "*"
-        usage="Usage: param <fetch|set|show|load|preload|forceload|diff|download|help>"
+        usage="Usage: param <fetch|set|show|load|preload|forceload|save|save-template|diff|validate|download|help>"
         if len(args) < 1:
             print(usage)
             return
@@ -142,6 +142,11 @@ class ParamState:
             else:
                 param_wildcard = "*"
             self.mav_param.save(args[1], param_wildcard, verbose=True)
+        elif args[0] == "save-template":
+            if len(args) != 2:
+                print("usage: param save-template <filename>")
+                return
+            self.mav_param.save_template(args[1])
         elif args[0] == "diff":
             wildcard = '*'
             if len(args) < 2 or args[1].find('*') != -1:
@@ -160,6 +165,11 @@ class ParamState:
                     wildcard = args[2]
             print("%-16.16s %12.12s %12.12s" % ('Parameter', 'Defaults', 'Current'))
             self.mav_param.diff(filename, wildcard=wildcard)
+        elif args[0] == "validate":
+            if len(args) != 2:
+                print("usage: param validate <filename>")
+                return
+            self.mav_param.validate(args[1])
         elif args[0] == "set":
             if len(args) < 2:
                 print("Usage: param set PARMNAME VALUE")
@@ -169,8 +179,6 @@ class ParamState:
                 return
             param = args[1]
             value = args[2]
-            if value.startswith('0x'):
-                value = int(value, base=16)
             if not param.upper() in self.mav_param:
                 print("Unable to find parameter '%s'" % param)
                 return
@@ -226,7 +234,7 @@ class ParamModule(mp_module.MPModule):
         self.add_command('param', self.cmd_param, "parameter handling",
                          ["<download>",
                           "<set|show|fetch|help> (PARAMETER)",
-                          "<load|save|diff> (FILENAME)"])
+                          "<load|save|save-template|diff|validate> (FILENAME)"])
         if self.continue_mode and self.logdir != None:
             parmfile = os.path.join(self.logdir, 'mav.parm')
             if os.path.exists(parmfile):
