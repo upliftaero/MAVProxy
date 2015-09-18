@@ -20,6 +20,7 @@ import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 #from matplotlib.backends.backend_pdf import PdfPages        # Obsolete unless we move back to PDF files
 
+import docx				# Had this in a lcoal repo - not sure if it's necessary
 from docx import Document
 from docx.shared import Inches
 

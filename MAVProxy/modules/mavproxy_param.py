@@ -170,6 +170,11 @@ class ParamState:
                 print("usage: param validate <filename>")
                 return
             self.mav_param.validate(args[1])
+        elif args[0] == "load-from-validator":
+            if len(args) != 2:
+                print("usage: param validate <filename>")
+                return
+            self.mav_param.load_from_validator(args[1])
         elif args[0] == "set":
             if len(args) < 2:
                 print("Usage: param set PARMNAME VALUE")
@@ -180,7 +185,7 @@ class ParamState:
             param = args[1]
             value = args[2]
             if value.startswith('0x'):
-                value = int(value, base=16) 
+                value = int(value, base=16)
             if not param.upper() in self.mav_param:
                 print("Unable to find parameter '%s'" % param)
                 return
