@@ -23,6 +23,7 @@ class ConsoleModule(mp_module.MPModule):
         self.total_time = 0.0
         self.speed = 0
         self.max_link_num = 0
+        self.last_sys_status_health = 0
         mpstate.console = wxconsole.MessageConsole(title='Console')
 
         # setup some default status information
@@ -191,13 +192,18 @@ class ConsoleModule(mp_module.MPModule):
             self.console.set_status('GPSSpeed', 'GPSSpeed %u' % msg.groundspeed)
             self.console.set_status('Thr', 'Thr %u' % msg.throttle)
             t = time.localtime(msg._timestamp)
-            if msg.groundspeed > 3 and not self.in_air:
+            flying = False
+            if self.mpstate.vehicle_type == 'copter':
+                flying = self.master.motors_armed()
+            else:
+                flying = msg.groundspeed > 3
+            if flying and not self.in_air:
                 self.in_air = True
                 self.start_time = time.mktime(t)
-            elif msg.groundspeed > 3 and self.in_air:
+            elif flying and self.in_air:
                 self.total_time = time.mktime(t) - self.start_time
                 self.console.set_status('FlightTime', 'FlightTime %u:%02u' % (int(self.total_time)/60, int(self.total_time)%60))
-            elif msg.groundspeed < 3 and self.in_air:
+            elif not flying and self.in_air:
                 self.in_air = False
                 self.total_time = time.mktime(t) - self.start_time
                 self.console.set_status('FlightTime', 'FlightTime %u:%02u' % (int(self.total_time)/60, int(self.total_time)%60))
@@ -209,8 +215,10 @@ class ConsoleModule(mp_module.MPModule):
                         'MAG'  : mavutil.mavlink.MAV_SYS_STATUS_SENSOR_3D_MAG,
                         'INS'  : mavutil.mavlink.MAV_SYS_STATUS_SENSOR_3D_ACCEL | mavutil.mavlink.MAV_SYS_STATUS_SENSOR_3D_GYRO,
                         'AHRS' : mavutil.mavlink.MAV_SYS_STATUS_AHRS,
+                        'RC'   : mavutil.mavlink.MAV_SYS_STATUS_SENSOR_RC_RECEIVER,
                         'TERR' : mavutil.mavlink.MAV_SYS_STATUS_TERRAIN,
                         'RNG'  : mavutil.mavlink.MAV_SYS_STATUS_SENSOR_LASER_POSITION}
+            announce = [ 'RC' ]
             for s in sensors.keys():
                 bits = sensors[s]
                 present = ((msg.onboard_control_sensors_enabled & bits) == bits)
@@ -225,6 +233,14 @@ class ConsoleModule(mp_module.MPModule):
                 if s == 'TERR' and fg == 'green' and master.field('TERRAIN_REPORT', 'pending', 0) != 0:
                     fg = 'yellow'
                 self.console.set_status(s, s, fg=fg)
+            for s in announce:
+                bits = sensors[s]
+                present = ((msg.onboard_control_sensors_enabled & bits) == bits)
+                healthy = ((msg.onboard_control_sensors_health & bits) == bits)
+                was_healthy = ((self.last_sys_status_health & bits) == bits)
+                if present and not healthy and was_healthy:
+                    self.say("%s fail" % s)
+            self.last_sys_status_health = msg.onboard_control_sensors_health
 
         elif type == 'WIND':
             self.console.set_status('Wind', 'Wind %u/%.2f' % (msg.direction, msg.speed))

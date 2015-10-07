@@ -12,6 +12,7 @@ import fnmatch, errno, threading
 import serial, Queue, select
 import traceback
 import select
+import shlex
 
 from MAVProxy.modules.lib import textconsole
 from MAVProxy.modules.lib import rline
@@ -441,11 +442,11 @@ def process_stdin(line):
     if not line:
         return
 
-    args = line.split()
+    args = shlex.split(line)
     cmd = args[0]
     while cmd in mpstate.aliases:
         line = mpstate.aliases[cmd]
-        args = line.split() + args[1:]
+        args = shlex.split(line) + args[1:]
         cmd = args[0]
         
     if cmd == 'help':
@@ -990,6 +991,17 @@ if __name__ == '__main__':
         for m in standard_modules:
             load_module(m, quiet=True)
 
+    if opts.console:
+        process_stdin('module load console')
+
+    if opts.map:
+        process_stdin('module load map')
+
+    for module in opts.load_module:
+        modlist = module.split(',')
+        for mod in modlist:
+            process_stdin('module load %s' % mod)
+
     if 'HOME' in os.environ and not opts.setup:
         start_script = os.path.join(os.environ['HOME'], ".mavinit.scr")
         if os.path.exists(start_script):
@@ -1005,17 +1017,6 @@ if __name__ == '__main__':
             run_script(start_script)
         else:
             print("no script %s" % start_script)
-
-    if opts.console:
-        process_stdin('module load console')
-
-    if opts.map:
-        process_stdin('module load map')
-
-    for module in opts.load_module:
-        modlist = module.split(',')
-        for mod in modlist:
-            process_stdin('module load %s' % mod)
 
     if opts.cmd is not None:
         for cstr in opts.cmd:
