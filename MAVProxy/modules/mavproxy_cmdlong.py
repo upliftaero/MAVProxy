@@ -13,8 +13,13 @@ class CmdlongModule(mp_module.MPModule):
         self.add_command('setyaw', self.cmd_condition_yaw, "condition_yaw")
         self.add_command('takeoff', self.cmd_takeoff, "takeoff")
         self.add_command('velocity', self.cmd_velocity, "velocity")
+        self.add_command('position', self.cmd_position, "position")
+        self.add_command('attitude', self.cmd_attitude, "attitude")
         self.add_command('cammsg', self.cmd_cammsg, "cammsg")
         self.add_command('camctrlmsg', self.cmd_camctrlmsg, "camctrlmsg")
+        self.add_command('posvel', self.cmd_posvel, "posvel")
+        self.add_command('parachute', self.cmd_parachute, "parachute",
+                         ['<enable|disable|release>'])
 
     def cmd_takeoff(self, args):
         '''take off'''
@@ -37,6 +42,30 @@ class CmdlongModule(mp_module.MPModule):
                 0, # param5
                 0, # param6
                 altitude) # param7
+
+    def cmd_parachute(self, args):
+        '''parachute control'''
+        usage = "Usage: parachute <enable|disable|release>"
+        if len(args) != 1:
+            print(usage)
+            return
+
+        cmds = {
+            'enable'  : mavutil.mavlink.PARACHUTE_ENABLE,
+            'disable' : mavutil.mavlink.PARACHUTE_DISABLE,
+            'release' : mavutil.mavlink.PARACHUTE_RELEASE
+            }
+        if not args[0] in cmds:
+            print(usage)
+            return
+        cmd = cmds[args[0]]
+        self.master.mav.command_long_send(
+            self.settings.target_system,  # target_system
+            0, # target_component
+            mavutil.mavlink.MAV_CMD_DO_PARACHUTE,
+            0,
+            cmd,
+            0, 0, 0, 0, 0, 0)
 
     def cmd_camctrlmsg(self, args):
         '''camctrlmsg'''
@@ -139,6 +168,91 @@ class CmdlongModule(mp_module.MPModule):
                                       x_mps, y_mps, z_mps,  # velocity x,y,z
                                       0, 0, 0,  # accel x,y,z
                                       0, 0)     # yaw, yaw rate
+
+    def cmd_position(self, args):
+        '''position x-m y-m z-m'''
+        if (len(args) != 3):
+            print("Usage: position x y z (meters)")
+            return
+
+        if (len(args) == 3):
+            x_m = float(args[0])
+            y_m = float(args[1])
+            z_m = float(args[2])
+            print("x:%f, y:%f, z:%f" % (x_m, y_m, z_m))
+            self.master.mav.set_position_target_local_ned_send(
+                                      0,  # system time in milliseconds
+                                      1,  # target system
+                                      0,  # target component
+                                      8,  # coordinate frame MAV_FRAME_BODY_NED
+                                      3576,     # type mask (pos only)
+                                      x_m, y_m, z_m,  # position x,y,z
+                                      0, 0, 0,  # velocity x,y,z
+                                      0, 0, 0,  # accel x,y,z
+                                      0, 0)     # yaw, yaw rate
+
+    def cmd_attitude(self, args):
+        '''attitude q0 q1 q2 q3 thrust'''
+        if len(args) != 5:
+            print("Usage: attitude q0 q1 q2 q3 thrust (0~1)")
+            return
+
+        if len(args) == 5:
+            q0 = float(args[0])
+            q1 = float(args[1])
+            q2 = float(args[2])
+            q3 = float(args[3])
+            thrust = float(args[4])
+            att_target = [q0, q1, q2, q3]
+            print("q0:%.3f, q1:%.3f, q2:%.3f q3:%.3f thrust:%.2f" % (q0, q1, q2, q3, thrust))
+            self.master.mav.set_attitude_target_send(
+                                      0,  # system time in milliseconds
+                                      1,  # target system
+                                      0,  # target component
+                                      63, # type mask (ignore all except attitude + thrust)
+                                      att_target, # quaternion attitude
+                                      0,  # body roll rate
+                                      0,  # body pich rate
+                                      0,  # body yaw rate
+                                      thrust)  # thrust
+
+    def cmd_posvel(self, args):
+        '''posvel mapclick vN vE vD'''
+        ignoremask = 511
+        latlon = None
+        try:
+            latlon = self.module('map').click_position
+        except Exception:
+            pass
+        if latlon is None:
+            print "set latlon to zeros"
+            latlon = [0, 0]
+        else:
+            ignoremask = ignoremask & 504
+            print "found latlon", ignoremask            
+        vN = 0
+        vE = 0
+        vD = 0
+        if (len(args) == 3):
+            vN = float(args[0])
+            vE = float(args[1])
+            vD = float(args[2])
+            ignoremask = ignoremask & 455
+
+        print "ignoremask",ignoremask
+        print latlon
+        self.master.mav.set_position_target_global_int_send(
+            0,  # system time in ms
+            1,  # target system
+            0,  # target component
+            mavutil.mavlink.MAV_FRAME_GLOBAL_RELATIVE_ALT_INT,
+            ignoremask, # ignore
+            int(latlon[0] * 1e7),
+            int(latlon[1] * 1e7),
+            10,
+            vN, vE, vD, # velocity
+            0, 0, 0, # accel x,y,z
+            0, 0) # yaw, yaw rate
 
 def init(mpstate):
     '''initialise module'''

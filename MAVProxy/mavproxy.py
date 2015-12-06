@@ -12,6 +12,7 @@ import fnmatch, errno, threading
 import serial, Queue, select
 import traceback
 import select
+import shlex
 
 from MAVProxy.modules.lib import textconsole
 from MAVProxy.modules.lib import rline
@@ -171,6 +172,7 @@ class MPState(object):
 
         # mavlink outputs
         self.mav_outputs = []
+        self.sysid_outputs = {}
 
         # SITL output
         self.sitl_output = None
@@ -441,11 +443,11 @@ def process_stdin(line):
     if not line:
         return
 
-    args = line.split()
+    args = shlex.split(line)
     cmd = args[0]
     while cmd in mpstate.aliases:
         line = mpstate.aliases[cmd]
-        args = line.split() + args[1:]
+        args = shlex.split(line) + args[1:]
         cmd = args[0]
         
     if cmd == 'help':
@@ -510,6 +512,10 @@ def process_master(m):
     msgs = m.mav.parse_buffer(s)
     if msgs:
         for msg in msgs:
+            sysid = msg.get_srcSystem()
+            if sysid in mpstate.sysid_outputs:
+                  # the message has been handled by a specialised handler for this system
+                  continue
             if getattr(m, '_timestamp', None) is None:
                 m.post_message(msg)
             if msg.get_type() == "BAD_DATA":
@@ -736,6 +742,9 @@ def main_loop():
                 rin.append(master.fd)
         for m in mpstate.mav_outputs:
             rin.append(m.fd)
+        for sysid in mpstate.sysid_outputs:
+            m = mpstate.sysid_outputs[sysid]
+            rin.append(m.fd)
         if rin == []:
             time.sleep(0.0001)
             continue
@@ -760,6 +769,14 @@ def main_loop():
                               return
                         continue
             for m in mpstate.mav_outputs:
+                if fd == m.fd:
+                    process_mavlink(m)
+                    if mpstate is None:
+                          return
+                    continue
+
+            for sysid in mpstate.sysid_outputs:
+                m = mpstate.sysid_outputs[sysid]
                 if fd == m.fd:
                     process_mavlink(m)
                     if mpstate is None:
@@ -990,6 +1007,17 @@ if __name__ == '__main__':
         for m in standard_modules:
             load_module(m, quiet=True)
 
+    if opts.console:
+        process_stdin('module load console')
+
+    if opts.map:
+        process_stdin('module load map')
+
+    for module in opts.load_module:
+        modlist = module.split(',')
+        for mod in modlist:
+            process_stdin('module load %s' % mod)
+
     if 'HOME' in os.environ and not opts.setup:
         start_script = os.path.join(os.environ['HOME'], ".mavinit.scr")
         if os.path.exists(start_script):
@@ -1005,17 +1033,6 @@ if __name__ == '__main__':
             run_script(start_script)
         else:
             print("no script %s" % start_script)
-
-    if opts.console:
-        process_stdin('module load console')
-
-    if opts.map:
-        process_stdin('module load map')
-
-    for module in opts.load_module:
-        modlist = module.split(',')
-        for mod in modlist:
-            process_stdin('module load %s' % mod)
 
     if opts.cmd is not None:
         for cstr in opts.cmd:

@@ -30,10 +30,20 @@ class rline(object):
         if prompt != self.prompt:
             self.prompt = prompt
             sys.stdout.write(prompt)
-            try:
-                redisplay()
-            except Exception as ex:
-                pass
+            self.redisplay()
+
+    def add_history(self, line):
+        '''add a line to the history'''
+        readline.add_history(line)
+        self.redisplay()
+
+    def redisplay(self):
+        '''redisplay prompt'''
+        try:
+            redisplay()
+        except Exception as ex:
+            pass
+        
 
 
 def complete_alias(text):
@@ -144,7 +154,7 @@ def complete(text, state):
         return last_clist[state]
 
     # split the command so far
-    cmd = readline.get_line_buffer().split(' ')
+    cmd = readline.get_line_buffer().split()
 
     if len(cmd) == 1:
         # if on first part then complete on commands and aliases
